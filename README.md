@@ -2,9 +2,11 @@
 
 **See what you requested—and what the server reported.**
 
-A Pi extension that places a right-aligned model-identity badge above each completed OpenAI Codex
-assistant reply. It observes normal requests; it does not send probe prompts, replace the terminal UI,
-or add labels to model context.
+[中文说明](README.zh-CN.md) · [Releases](https://github.com/malker97/pi-model-lens/releases) · [Release Guide](docs/RELEASING.md)
+
+A standalone Pi extension that shows the response model and a small status light above each completed
+OpenAI Codex reply. The badge is right-aligned and display-only: it never changes the assistant's answer
+or adds tokens to future model context.
 
 ```text
                                                         gpt-6-astra ●
@@ -12,111 +14,133 @@ or add labels to model context.
 The assistant's original answer stays unchanged.
 ```
 
-## Preview Status
+No proxy, probe prompts, global fetch patch, or separate desktop app is required.
 
-This is a private, local-test package. It is **not published to npm**, and `private: true` prevents an
-accidental npm publish. Requires **Pi 1.5** and **Node.js 22.19 or later**; the current host compatibility
-tests are pinned to Pi 1.5.0.
+## Install
 
-## Install Locally
+Requires **Pi 1.5** and **Node.js 22.19 or later**. Compatibility tests currently use Pi 1.5.0 with
+Node 22 and 24, in regular and fullscreen terminal modes.
+
+Install the GitHub release:
+
+```sh
+pi install git:github.com/malker97/pi-model-lens@v0.0.1
+```
+
+Run `/reload` in existing sessions. New sessions load it automatically. The tag is pinned; install a
+newer release intentionally when you want to upgrade.
+
+**npm status:** the package is prepared for npm, but registry publication is a separate, manually
+approved operation. Until a version is actually listed on npm, use the GitHub installation above.
+
+After npm publication, the equivalent command will be:
+
+```sh
+pi install npm:pi-model-lens@0.0.1
+```
+
+### Local Development or Migration
 
 ```sh
 pi install /absolute/path/to/pi-model-lens
 ```
 
-Run `/reload` in existing Pi sessions. New sessions load it automatically. Local installs reference the
-checkout, so keep the directory in place. Nothing needs rebuilding in OpenUsage.
+A local installation points to that checkout; keep the directory in place. Before switching between
+local, Git, and npm installations, use `pi list` and remove the previous source with `pi remove <source>`.
+Do not load two copies.
 
-**Migrating from `openusage-routing.ts`:** first move the old file out of `~/.pi/agent/extensions/` (or your
-custom agent directory's extension folder). Keep it as a backup elsewhere. Do not load both collectors.
-Model Lens pauses its own capture and warns if a duplicate collector is detected.
+If upgrading from the original `openusage-routing.ts`, move that file out of your agent directory's
+`extensions` folder and keep it as a backup elsewhere. Model Lens detects duplicate collectors and
+pauses its own capture rather than double-recording responses.
 
-To remove the package:
+To uninstall, run `pi remove` with the source you installed, then `/reload`. This does not delete or
+rewrite existing conversations.
 
-```sh
-pi remove /absolute/path/to/pi-model-lens
-```
+## Read the Light
 
-Reload afterwards. Existing session records are retained; conversations are not rewritten.
+Only the response identifier and the light appear on the collapsed badge. Colors follow Pi's theme.
 
-## Read the Badge
-
-The collapsed badge shows only the **response model and a small status dot**. The model text stays
-neutral; the dot uses Pi's success, warning, error, or dim theme color.
-
-| Dot | Meaning |
+| Light | Meaning |
 |---|---|
-| Green | The reported model identifier matches the outgoing request |
-| Yellow | An explicitly approved upgrade pair was returned |
-| Red | Any other identifier difference, including cross-family responses; not a claim of lower quality |
+| Green | Reported model identifier matches the outgoing request |
+| Yellow | The response is in the project's explicitly configured upgrade pair |
+| Red | Any other identifier difference, including cross-family responses |
 | Gray | Missing, incomplete, conflicting, or invalid evidence prevents a comparison |
 
-The only approved upgrade currently is **`gpt-6-astra` → `gpt-6.2-astra`**. The reverse direction,
-`gpt-6-astra` → `gpt-6.1-sol`, and other unlisted differences are red. Larger version numbers do not
-automatically qualify for yellow.
+The current project-maintainer policy treats **`gpt-6-astra` → `gpt-6.2-astra`** as the yellow pair.
+This is **not an OpenAI rating or a benchmark result**. The reverse direction and other differences,
+such as `gpt-6-astra` → `gpt-6.1-sol`, are red. Larger version numbers do not automatically count as upgrades.
+Red means “not the requested identifier,” not proof of lower quality.
 
-If no unambiguous response model is available, the badge reads `Unknown ●`. Requested identifiers,
-comparison text, and evidence sources are kept in the expanded detail, not repeated on every badge.
-`Body` means only `response.model` was available; `Server` means an `openai-model` / `x-openai-model`
-header was present without conflicting evidence. An approved upgrade still has differing identifiers
-in the detailed comparison.
+If no unambiguous response model is available, the label is `Unknown`. Model identifiers are compared
+verbatim; the extension does not invent alias equivalences or verify model weights.
 
-Identifiers are compared verbatim; no model-version aliases are invented. A match is a comparison of
-server-reported identifiers, **not verification of model weights**.
+Use Pi's expansion shortcut (default **Ctrl+O**) for the request identifier, full evidence, response ID,
+and completion time:
 
-The badge appears after a reply completes, including replies that call tools. Local tool-result blocks
-do not get separate model identities. Failed, cancelled, truncated, internal, and cache-warming calls do
-not get successful-reply badges. Earlier replies with saved routing records render on session resume;
-missing historical evidence cannot be recovered.
+- **Response Model Field Only:** the response body supplied `response.model`.
+- **Server Model Metadata:** an `openai-model` / `x-openai-model` header was present without conflicting identifiers.
+- **Conflicting Model Fields:** reported identifiers disagree; all evidence is preserved.
 
-Narrow terminals shorten the response identifier while retaining the dot. Pi's tool-output expansion
-shortcut (default **Ctrl+O**) reveals the requested model, full evidence, response ID, and completion time.
+The detailed comparison still says the identifiers differ for a yellow upgrade pair.
 
-`/model-lens` shows the latest record without making a request. `/openusage-routing` remains an alias.
+`/model-lens` shows the latest record without making a request. `/openusage-routing` is a migration alias.
 
-## Privacy and OpenUsage Compatibility
+## Coverage and Limitations
 
-The extension delegates to the existing `openai-codex` provider's `streamSimple` implementation. It
-preserves authentication, callbacks, transport, assistant content, and usage. WebSocket and SSE model
-events are captured per call, and the final response ID is matched to the actual assistant message.
-No global `fetch` patch, proxy certificate, or model self-identification prompt is used.
+- Captures Pi's **`openai-codex` provider using `openai-codex-responses`**, through WebSocket and SSE hooks.
+- Shows badges after successful completion, including tool-calling replies. Tool results are not separate model replies.
+- Excludes failed, cancelled, truncated, internal, and cache-warming calls from successful-reply badges.
+- Restores badges for historical replies that already contain captured evidence. It cannot recover data that was never recorded.
+- Additional account provider IDs, direct Codex CLI calls, OpenAI API-key providers, Claude, and DeepSeek are not currently captured.
+- Future Pi versions need compatibility testing; a badge's identity is whatever the server reports, not independent proof of the model behind it.
 
-Records contain only request/response model identifiers, evidence-source labels, response ID, completion
-time, and status. They are stored as Pi custom entries, **not as assistant text**. No prompt, answer,
-reasoning, tool arguments, cookies, other headers, or credentials are added to these records. This
-package does not upload them. Sharing/exporting a Pi session may include its custom metadata entries.
+## Privacy and Compatibility
 
-The entry name **`openusage.model-routing`** and schema version **1** are unchanged, so OpenUsage's
-Usage Trend continues reading the same data. Model Lens does not depend on the OpenUsage app.
+Model Lens delegates to Pi's existing provider, preserving authentication, callbacks, transport, message
+content, and usage. Separate per-call state and response-ID matching keep retries and concurrent cache
+warming from being assigned to the wrong assistant reply.
 
-Currently only Pi's **`openai-codex` / `openai-codex-responses`** path is captured. Additional account
-provider IDs, direct Codex CLI calls, OpenAI API-key providers, Claude, and DeepSeek are outside this
-first version. Reload is required after package updates.
+It stores only request/response model identifiers, evidence sources, response ID, completion time, and
+status as local **custom session entries**. It does not add prompts, answers, reasoning, tool arguments,
+cookies, other headers, or credentials to those entries, and does not upload them. Sharing or exporting
+a Pi session may include its custom metadata.
 
-## Development and Tests
+For migration compatibility, the entry type remains `openusage.model-routing` with schema version 1.
+External tools can optionally read that format. **Model Lens does not depend on OpenUsage** or any other
+consumer. See [Data Format](docs/DATA_FORMAT.md) for the schema and [Security](SECURITY.md) for the trust boundaries.
+
+## Troubleshooting
+
+- **No badge:** run `/reload`; check that you are using the supported provider and that the response completed. Old replies without metadata cannot be backfilled.
+- **Duplicate-collector warning:** remove the old standalone extension or duplicate package source, then reload.
+- **Gray light:** expand the record or run `/model-lens`; missing or conflicting data is not guessed from the selected model.
+- **Only response-body evidence:** headers are not always supplied. The extension does not promote a body field into an official header signal.
+- **Narrow terminal:** the model name is shortened, but the dot remains. Expansion shows the full identifier.
+
+## Development and Releases
 
 ```sh
 npm ci --ignore-scripts
 npm run check
 npm test
-python3 tests/tty-smoke.py  # macOS/Linux: isolated regular + fullscreen TUI preview
+python3 tests/tty-smoke.py
 npm run pack:check
 ```
 
-There are no runtime npm dependencies: Pi supplies the host packages. Development dependencies are
-used for type-checking and tests only.
+There are no runtime npm dependencies; Pi supplies the host packages. Development tests use a real Pi
+SDK, mocked SSE, and a loopback-only WebSocket server. Terminal smoke tests use isolated synthetic
+sessions, not real credentials or model requests.
 
-Tests cover request transformations, both model signal types, conflicts, unknowns, retries, concurrency,
-warmups, cancellation, privacy, duplicate collectors, narrow rendering, theme changes, and history
-restoration. A real Pi SDK test verifies that labels never enter the next model context. Real Codex
-adapter tests use mocked SSE and a loopback-only WebSocket server, not a real account. The POSIX TUI
-smoke test opens isolated synthetic sessions in regular and fullscreen modes, expands the evidence,
-and exits without submitting prompts or changing production session content.
+See [Contributing](CONTRIBUTING.md) for the test matrix and [Releasing](docs/RELEASING.md) for GitHub
+release artifacts, checksums, manual npm gates, and Trusted Publishing setup. Ordinary pushes and pull
+requests never publish npm packages.
 
-The exact badge placement is tested against Pi 1.5's native custom-entry insertion behavior. Future Pi
-versions should pass those compatibility tests before being declared supported.
+## License
 
-## License and Attribution
+[MIT](LICENSE): commercial use, modification, redistribution, and use in closed-source projects are
+permitted when the copyright and permission notices are retained. No warranty is provided.
 
-MIT. The capture logic originated in [OpenUsage](https://github.com/malker97/openusage), also MIT;
-the original copyright notice is retained in `LICENSE`.
+The initial capture implementation was developed in the [OpenUsage fork](https://github.com/malker97/openusage).
+The MIT notice from [upstream OpenUsage](https://github.com/robinebers/openusage) is retained alongside
+the notice for this project's contributions.

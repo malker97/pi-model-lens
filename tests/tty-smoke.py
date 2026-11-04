@@ -15,6 +15,7 @@ import uuid
 
 REPO = Path(__file__).resolve().parent.parent
 CLI = REPO / "node_modules/.bin/pi"
+PACKAGE = Path(os.environ.get("PI_MODEL_LENS_TEST_PACKAGE", str(REPO))).resolve()
 
 
 def fixture(work):
@@ -64,7 +65,7 @@ def check(mode):
                if key not in ("PI_SESSION_FILE", "PI_SESSION_ID", "PI_MANAGED_INSTALL_ROOT", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}
         env.update(PI_CODING_AGENT_DIR=str(agent), PI_CODING_AGENT_SESSION_DIR=str(agent / "sessions"),
                    PI_OFFLINE="1", TERM="xterm-256color", COLORTERM="truecolor", NO_PROXY="localhost,127.0.0.1")
-        command = [str(CLI), "--offline", "--no-extensions", "-e", str(REPO), "--no-skills", "--no-prompt-templates",
+        command = [str(CLI), "--offline", "--no-extensions", "-e", str(PACKAGE), "--no-skills", "--no-prompt-templates",
                    "--no-context-files", "--no-mcp", "--no-tools", "--session", str(session),
                    "--model", "openai-codex/gpt-6-astra", "--api-key", "offline-invalid-preview-key", "--tui-mode", mode]
         process = subprocess.Popen(command, cwd=work, env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)

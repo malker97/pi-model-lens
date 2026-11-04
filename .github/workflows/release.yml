@@ -1,0 +1,116 @@
+name: GitHub Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.ref.outputs.tag }}
+      version: ${{ steps.info.outputs.version }}
+      commit: ${{ steps.history.outputs.commit }}
+    steps:
+      - name: Require a stable version tag
+        id: ref
+        env:
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$REF" == refs/tags/* && "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo 'Run this workflow from a stable vX.Y.Z tag, not a branch.' >&2; exit 1;
+          }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a commit already on main
+        id: history
+        env:
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          commit=$(git rev-parse HEAD)
+          test "$commit" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
+          git merge-base --is-ancestor "$commit" origin/main
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.23.2'
+      - name: Pin the packaging CLI
+        run: npm install --global npm@12.2.1 --ignore-scripts
+      - name: Verify version and prepare release notes
+        id: info
+        env:
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          version=$(node scripts/verify-release.mjs "$TAG")
+          mkdir -p dist
+          node scripts/verify-release.mjs "$TAG" --notes > dist/release-notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm test
+      - run: python3 tests/tty-smoke.py
+      - name: Pack and test the shipped files
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+        run: |
+          npm pack --ignore-scripts --pack-destination dist
+          file="pi-model-lens-$VERSION.tgz"
+          (cd dist && sha256sum "$file" > "$file.sha256")
+          unpacked=$(mktemp -d)
+          tar -xzf "dist/$file" -C "$unpacked"
+          PI_MODEL_LENS_TEST_PACKAGE="$unpacked/package" python3 tests/tty-smoke.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-package
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  github-release:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-package
+          path: dist
+      - name: Publish or verify the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.package.outputs.tag }}
+          VERSION: ${{ needs.package.outputs.version }}
+          COMMIT: ${{ needs.package.outputs.commit }}
+        run: |
+          cd dist
+          file="pi-model-lens-$VERSION.tgz"
+          sha256sum -c "$file.sha256"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            mkdir existing
+            gh release download "$TAG" -p "$file" -p "$file.sha256" -D existing
+            cmp "$file" "existing/$file"
+            cmp "$file.sha256" "existing/$file.sha256"
+            echo 'Existing release assets match; nothing was overwritten.'
+          else
+            gh release create "$TAG" "$file" "$file.sha256" --verify-tag --target "$COMMIT" \
+              --title "Pi Model Lens $TAG" --notes-file release-notes.md --latest
+          fi
+          gh release view "$TAG" --json isDraft,isPrerelease,body \
+            --jq 'select(.isDraft == false and .isPrerelease == false and (.body | length) > 0) | .body' > verified-notes.md
+          test -s verified-notes.md

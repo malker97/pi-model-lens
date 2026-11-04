@@ -1,0 +1,133 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Validate the released package only; do not publish'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      digest: ${{ steps.package.outputs.digest }}
+    steps:
+      - name: Require an approved version ref and explicit publication opt-in
+        env:
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PUBLISH_ENABLED: ${{ vars.NPM_PUBLISH_ENABLED }}
+        run: |
+          [[ "$REF" == refs/tags/* && "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo 'Dispatch from a stable vX.Y.Z tag, not a branch.' >&2; exit 1;
+          }
+          if [[ "$DRY_RUN" != true && "$PUBLISH_ENABLED" != true ]]; then
+            echo 'Npm publication is disabled. Configure Trusted Publishing before enabling NPM_PUBLISH_ENABLED.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a commit already on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.23.2'
+      - run: npm install --global npm@12.2.1 --ignore-scripts
+      - name: Verify the immutable GitHub package against its tagged source
+        id: package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node scripts/verify-release.mjs "$TAG")
+          file="pi-model-lens-$version.tgz"
+          gh release view "$TAG" --json isDraft,isPrerelease,body \
+            --jq 'select(.isDraft == false and .isPrerelease == false and (.body | length) > 0) | .body' > verified-notes.md
+          test -s verified-notes.md
+          mkdir -p dist expected
+          gh release download "$TAG" -p "$file" -p "$file.sha256" -D dist
+          npm pack --ignore-scripts --pack-destination expected
+          (cd expected && sha256sum "$file" > "$file.sha256")
+          cmp "dist/$file" "expected/$file"
+          cmp "dist/$file.sha256" "expected/$file.sha256"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "digest=$(sha256sum "dist/$file" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-npm-package
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Report dry-run result
+        if: inputs.dry_run
+        run: echo 'Validated the released package. No npm publish was attempted.' >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: ${{ !inputs.dry_run && vars.NPM_PUBLISH_ENABLED == 'true' }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.23.2'
+      - run: npm install --global npm@12.2.1 --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-npm-package
+          path: dist
+      - name: Publish the verified package with OIDC
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIGEST: ${{ needs.prepare.outputs.digest }}
+        run: |
+          cd dist
+          file="pi-model-lens-$VERSION.tgz"
+          printf '%s  %s\n' "$DIGEST" "$file" | sha256sum -c -
+          integrity="sha512-$(openssl dgst -sha512 -binary "$file" | openssl base64 -A)"
+          lookup=(view "pi-model-lens@$VERSION" dist.integrity --registry=https://registry.npmjs.org/ --fetch-retries=0 --fetch-timeout=10000)
+          if existing=$(npm "${lookup[@]}" --json); then
+            published=$(node -p 'JSON.parse(process.argv[1])' "$existing")
+            test "$published" = "$integrity" || { echo 'An existing version has different package bytes.' >&2; exit 1; }
+            echo 'This exact package is already published; nothing was changed.'
+            exit 0
+          else
+            node -e 'if (JSON.parse(process.argv[1]).error?.code !== "E404") process.exit(1)' "$existing" || {
+              echo 'Registry lookup failed; refusing to guess whether the version exists.' >&2; exit 1;
+            }
+          fi
+          npm publish "$file" --registry=https://registry.npmjs.org/ --access public --provenance --ignore-scripts
+          for attempt in 1 2 3 4 5; do
+            if published=$(npm "${lookup[@]}"); then
+              test "$published" = "$integrity" || { echo 'Published package integrity mismatch.' >&2; exit 1; }
+              echo 'Published package integrity verified.'
+              exit 0
+            fi
+            if [[ "$attempt" != 5 ]]; then sleep 3; fi
+          done
+          echo 'Publish completed but registry verification timed out. Rerun to verify; do not bump the version blindly.' >&2
+          exit 1
