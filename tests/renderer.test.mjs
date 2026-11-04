@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { Container, visibleWidth } from "@earendil-works/pi-tui";
 import { AssistantMessageComponent, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { badgeText, renderEntry } from "../src/renderer.ts";
+import { badgeText, badgeTone, renderEntry } from "../src/renderer.ts";
 import { record } from "./fixtures.mjs";
 
 const plainTheme = { fg: (_color, text) => text };
@@ -14,16 +14,47 @@ const variants = [record(), record({ evidence: [{ source: "response.headers", fi
     record({ evidence: [] }), record({ requestedModel: null }), record({ evidenceIncomplete: true }),
     record({ evidence: [...record().evidence, { source: "event.headers", field: "openai-model", model: "gpt-6.2-astra" }] })];
 
-test("normal badges show requested/returned identifiers, comparison, and evidence strength", () => {
-    assert.match(badgeText(variants[0], 160), /Req: gpt-6-astra → Resp: gpt-6-astra \[Match · Body\]/);
-    assert.match(badgeText(variants[1], 160), /Resp: gpt-6\.2-astra \[Different · Server\]/);
-    assert.match(badgeText(variants[2], 160), /Resp: \? \[Unknown\]/);
-    assert.match(badgeText(variants[4], 160), /Resp: \? \[Incomplete\]/);
-    assert.match(badgeText(variants[5], 160), /Resp: conflict \[Conflict\]/);
+test("collapsed badges contain only the response model and a dot", () => {
+    assert.equal(badgeText(variants[0], 160), "gpt-6-astra ●");
+    assert.equal(badgeText(variants[1], 160), "gpt-6.2-astra ●");
+    assert.equal(badgeText(variants[2], 160), "Unknown ●");
+    assert.equal(badgeText(variants[3], 160), "gpt-6-astra ●");
+    assert.equal(badgeText(variants[4], 160), "Unknown ●");
+    assert.equal(badgeText(variants[5], 160), "Unknown ●");
+    for (const data of variants) assert.doesNotMatch(badgeText(data, 160), /Req:|Resp:|Match|Body|Server|→/);
+});
+
+test("lights are green for matches, yellow only for the agreed upgrade, red for other differences", () => {
+    assert.equal(badgeTone(variants[0]), "success");
+    assert.equal(badgeTone(variants[1]), "warning");
+    const response = (model, requestedModel = "gpt-6-astra") => record({ requestedModel,
+        evidence: [{ source: "response.model", field: "model", model }] });
+    assert.equal(badgeTone(response("gpt-6.2-astra")), "warning");
+    assert.equal(badgeTone(response("gpt-6.1-sol")), "error", "cross-family differences are red");
+    assert.equal(badgeTone(response("gpt-6-astra", "gpt-6.2-astra")), "error");
+    assert.equal(badgeTone(response("gpt-7-astra")), "error", "larger version numbers do not invent upgrades");
+});
+
+test("missing, incomplete, conflicting and invalid metadata remain gray", () => {
+    for (const data of [variants[2], variants[3], variants[4], variants[5], undefined]) {
+        assert.equal(badgeTone(data), "dim");
+    }
+});
+
+test("only the dot receives the status color; the model text stays neutral", () => {
+    for (const [data, tone] of [[variants[0], "success"], [variants[1], "warning"], [variants[5], "dim"],
+        [record({ evidence: [{ source: "response.model", field: "model", model: "gpt-6.1-sol" }] }), "error"]]) {
+        const calls = [];
+        const theme = { fg: (color, text) => { calls.push({ color, text }); return text; } };
+        renderEntry({ data }, { expanded: false }, theme).render(100);
+        assert.equal(calls[0].color, "dim");
+        assert.deepEqual(calls[1], { color: tone, text: "●" });
+        assert.equal(calls.length, 2);
+    }
 });
 
 test("all states fit and align right across 0–180 columns, including ANSI styling", () => {
-    for (const data of [...variants, record({ requestedModel: "a".repeat(256) })]) {
+    for (const data of [...variants, record({ evidence: [{ source: "response.model", field: "model", model: "a".repeat(256) }] })]) {
         for (const theme of [plainTheme, coloredTheme]) {
             const view = renderEntry({ data }, { expanded: false }, theme);
             for (let width = 0; width <= 180; width++) {
@@ -36,12 +67,12 @@ test("all states fit and align right across 0–180 columns, including ANSI styl
     }
 });
 
-test("narrow layouts retain both model-version prefixes instead of only the request", () => {
-    const text = badgeText(variants[1], 36);
-    assert.match(text, /gpt-6/);
+test("narrow layouts prioritize the response version and retain the light", () => {
+    const text = badgeText(variants[1], 10);
     assert.match(text, /gpt-6\.2/);
-    assert.match(text, /→/);
-    assert.match(text, /≠/);
+    assert.ok(text.endsWith(" ●"));
+    assert.ok(visibleWidth(text) <= 10);
+    assert.equal(badgeText(variants[1], 1), "●");
 });
 
 test("expanded detail shows both conflicting fields and wraps instead of overflowing", () => {
@@ -107,7 +138,7 @@ for (const theme of ["dark", "light"]) {
             assert.deepEqual(lines, restored.chatContainer.render(width));
             assert.ok(lines.every(line => visibleWidth(line) <= width));
             const plain = lines.map(stripVTControlCharacters);
-            const labelIndex = plain.findIndex(line => line.includes("gpt-6") || line.includes("Req:"));
+            const labelIndex = plain.findIndex(line => line.includes("gpt-6-astra") && line.includes("●"));
             const bodyIndex = plain.findIndex(line => line.includes("Synthetic"));
             assert.ok(labelIndex >= 0 && labelIndex < bodyIndex);
         }

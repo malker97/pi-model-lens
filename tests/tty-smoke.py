@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -30,7 +31,8 @@ def fixture(work):
     add("model_change", provider="openai-codex", modelId="gpt-6-astra")
     body = {"source": "response.model", "field": "model", "model": "gpt-6-astra"}
     server = {"source": "event.headers", "field": "openai-model", "model": "gpt-6.2-astra"}
-    for index, evidence in enumerate([[body], [server], [], [body, server]], 1):
+    cross_family = {"source": "response.model", "field": "model", "model": "gpt-6.1-sol"}
+    for index, evidence in enumerate([[body], [server], [cross_family], [], [body, server]], 1):
         add("message", message={"role": "user", "content": "OFFLINE SYNTHETIC PREVIEW", "timestamp": 1})
         add("custom", customType="openusage.model-routing", data={
             "schemaVersion": 1, "provider": "openai-codex", "api": "openai-codex-responses",
@@ -90,9 +92,13 @@ def check(mode):
                     os.write(master, b"\x1b[1;1R")
                 if b"\x1b[c" in chunk:
                     os.write(master, b"\x1b[?1;2c")
-                if ready_at is None and all(tag in output for tag in [b"[Match", b"[Different", b"[Unknown", b"[Conflict"]):
+                text = output.decode("utf8", "replace")
+                plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+                dot_colors = set(re.findall(r"(\x1b\[[0-9;]*m)●", text))
+                if ready_at is None and len(dot_colors) >= 4 and all(label in plain for label in
+                        ["gpt-6-astra ●", "gpt-6.2-astra ●", "gpt-6.1-sol ●", "Unknown ●"]):
                     ready_at = time.monotonic()
-                if expand_sent and expanded_at is None and b"resp-preview-4" in output:
+                if expand_sent and expanded_at is None and b"resp-preview-5" in output:
                     expanded_at = time.monotonic()
             if process.poll() is None:
                 process.wait(timeout=2)
@@ -106,7 +112,7 @@ def check(mode):
         after = [json.loads(line) for line in session.read_text().splitlines()]
         content = lambda rows: [row for row in rows if row.get("type") in ("message", "custom")]
         assert content(after) == content(original), "TUI preview must not change conversation or routing entries"
-        print(f"PASS {mode}: four badges, expanded evidence, clean exit; no prompts submitted")
+        print(f"PASS {mode}: five compact badges, four lamp colors, expanded evidence, clean exit; no prompts submitted")
 
 
 for mode in ("regular", "fullscreen"):

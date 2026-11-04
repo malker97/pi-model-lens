@@ -7,7 +7,7 @@ assistant reply. It observes normal requests; it does not send probe prompts, re
 or add labels to model context.
 
 ```text
-                         Req: gpt-6-astra → Resp: gpt-6-astra [Match · Body]
+                                                        gpt-6-astra ●
 
 The assistant's original answer stays unchanged.
 ```
@@ -41,15 +41,25 @@ Reload afterwards. Existing session records are retained; conversations are not 
 
 ## Read the Badge
 
-| Label | Meaning |
+The collapsed badge shows only the **response model and a small status dot**. The model text stays
+neutral; the dot uses Pi's success, warning, error, or dim theme color.
+
+| Dot | Meaning |
 |---|---|
-| Match | The reported model identifier equals the model in the outgoing request |
-| Different | The reported identifier differs; this may be an alias or version change, not necessarily a downgrade |
-| Unknown | Request or response model metadata is missing |
-| Conflict | Model identifiers disagree across response fields or events |
-| Incomplete | Metadata was bounded or could not be safely correlated; no match verdict is claimed |
-| Body | Evidence came only from `response.model` |
-| Server | An `openai-model` / `x-openai-model` header was present, without conflicting evidence |
+| Green | The reported model identifier matches the outgoing request |
+| Yellow | An explicitly approved upgrade pair was returned |
+| Red | Any other identifier difference, including cross-family responses; not a claim of lower quality |
+| Gray | Missing, incomplete, conflicting, or invalid evidence prevents a comparison |
+
+The only approved upgrade currently is **`gpt-6-astra` → `gpt-6.2-astra`**. The reverse direction,
+`gpt-6-astra` → `gpt-6.1-sol`, and other unlisted differences are red. Larger version numbers do not
+automatically qualify for yellow.
+
+If no unambiguous response model is available, the badge reads `Unknown ●`. Requested identifiers,
+comparison text, and evidence sources are kept in the expanded detail, not repeated on every badge.
+`Body` means only `response.model` was available; `Server` means an `openai-model` / `x-openai-model`
+header was present without conflicting evidence. An approved upgrade still has differing identifiers
+in the detailed comparison.
 
 Identifiers are compared verbatim; no model-version aliases are invented. A match is a comparison of
 server-reported identifiers, **not verification of model weights**.
@@ -59,8 +69,8 @@ do not get separate model identities. Failed, cancelled, truncated, internal, an
 not get successful-reply badges. Earlier replies with saved routing records render on session resume;
 missing historical evidence cannot be recovered.
 
-Narrow terminals shorten both identifiers while keeping the comparison visible. Pi's tool-output
-expansion shortcut (default **Ctrl+O**) reveals the full evidence, response ID, and completion time.
+Narrow terminals shorten the response identifier while retaining the dot. Pi's tool-output expansion
+shortcut (default **Ctrl+O**) reveals the requested model, full evidence, response ID, and completion time.
 
 `/model-lens` shows the latest record without making a request. `/openusage-routing` remains an alias.
 

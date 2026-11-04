@@ -81,7 +81,7 @@ test("real Pi SDK persists badges before replies without sending them back in mo
             assert.ok(entries.indexOf(badge) < replyIndex);
         }
         assert.equal(session.getLastAssistantText(), "Synthetic answer 2.");
-        assert.doesNotMatch(JSON.stringify(contexts), /openusage.model-routing|Comparison:|Req:|\[Match|Server Model Metadata/);
+        assert.doesNotMatch(JSON.stringify(contexts), /openusage.model-routing|Comparison:|Req:|\[Match|Server Model Metadata|●/);
         const assistants = session.messages.filter(m => m.role === "assistant");
         assert.deepEqual(assistants.map(m => m.model), [model.id, model.id]);
         assert.deepEqual(assistants.map(m => m.content), [[{ type: "text", text: "Synthetic answer 1." }], [{ type: "text", text: "Synthetic answer 2." }]]);
