@@ -89,6 +89,7 @@ first version. Reload is required after package updates.
 npm ci --ignore-scripts
 npm run check
 npm test
+python3 tests/tty-smoke.py  # macOS/Linux: isolated regular + fullscreen TUI preview
 npm run pack:check
 ```
 
@@ -98,7 +99,9 @@ used for type-checking and tests only.
 Tests cover request transformations, both model signal types, conflicts, unknowns, retries, concurrency,
 warmups, cancellation, privacy, duplicate collectors, narrow rendering, theme changes, and history
 restoration. A real Pi SDK test verifies that labels never enter the next model context. Real Codex
-adapter tests use mocked SSE and a loopback-only WebSocket server, not a real account.
+adapter tests use mocked SSE and a loopback-only WebSocket server, not a real account. The POSIX TUI
+smoke test opens isolated synthetic sessions in regular and fullscreen modes, expands the evidence,
+and exits without submitting prompts or changing production session content.
 
 The exact badge placement is tested against Pi 1.5's native custom-entry insertion behavior. Future Pi
 versions should pass those compatibility tests before being declared supported.
